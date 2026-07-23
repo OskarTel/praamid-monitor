@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Praamid.ee car-ticket monitor: Heltermaa -> Rohuküla, 19 July 2026.
+Praamid.ee car-ticket monitor: Kuivastu -> Virtsu, 26 July 2026,
+departures between 14:00 and 18:10.
 
-Checks the praamid.ee schedule API every 5 minutes. When a departure shows
-available small-vehicle (car) capacity, sends an email alert via Gmail SMTP.
+Checks the praamid.ee schedule API every 5 minutes. When a departure in the
+configured time window shows available small-vehicle (car) capacity, sends
+an email alert via Gmail SMTP.
 
 Usage:
   python3 praamid_monitor.py --test    # send a test email and exit
@@ -26,8 +28,10 @@ from datetime import datetime
 from email.message import EmailMessage
 
 # ---------------------------------------------------------------- settings
-DIRECTION = "HR"            # Heltermaa -> Rohuküla
-DATE = "2026-07-19"
+DIRECTION = "KV"            # Kuivastu -> Virtsu
+DATE = "2026-07-26"
+TIME_FROM = "14:00"         # only alert for departures in this window
+TIME_TO = "18:10"           # (inclusive of both ends)
 CHECK_INTERVAL_SEC = 300    # 5 minutes
 STATE_FILE = "alerted_departures.json"
 
@@ -35,6 +39,14 @@ API_URL = (
     "https://www.praamid.ee/online/events"
     f"?direction={DIRECTION}&departure-date={DATE}&time-shift=180"
 )
+
+ROUTE_LABELS = {
+    "HR": "Heltermaa -> Rohuküla",
+    "RH": "Rohuküla -> Heltermaa",
+    "KV": "Kuivastu -> Virtsu",
+    "VK": "Virtsu -> Kuivastu",
+}
+ROUTE_LABEL = ROUTE_LABELS.get(DIRECTION, DIRECTION)
 
 HEADERS = {
     "User-Agent": (
@@ -138,12 +150,14 @@ def check_once(alerted: set) -> None:
             "Run with --probe and check the structure.")
         return
 
+    in_window = [d for d in departures if TIME_FROM <= d["time"] <= TIME_TO]
     open_now = [
-        d for d in departures
+        d for d in in_window
         if isinstance(d["cars"], (int, float)) and d["cars"] > 0
     ]
     summary = ", ".join(f"{d['time']}={d['cars']}" for d in departures)
-    log(f"Car capacity per departure: {summary}")
+    log(f"Car capacity per departure: {summary} "
+        f"(watching {TIME_FROM}-{TIME_TO})")
 
     new_openings = [d for d in open_now if d["id"] not in alerted]
     if new_openings:
@@ -152,9 +166,10 @@ def check_once(alerted: set) -> None:
             for d in new_openings
         ]
         body = (
-            f"Car ticket availability found for Heltermaa -> Rohuküla "
-            f"on {DATE}:\n\n" + "\n".join(lines) +
-            "\n\nBook now: https://www.praamid.ee/portal/ticket/departure?direction=HR"
+            f"Car ticket availability found for {ROUTE_LABEL} "
+            f"on {DATE} (window {TIME_FROM}-{TIME_TO}):\n\n" +
+            "\n".join(lines) +
+            f"\n\nBook now: https://www.praamid.ee/portal/ticket/departure?direction={DIRECTION}"
         )
         send_email(
             f"Praamid ALERT: car spots open {DATE} "
@@ -170,8 +185,9 @@ def main() -> None:
         send_email(
             "Praamid monitor: test email",
             "This is a test. If you can read this, alerts will arrive the "
-            "same way when car tickets open up for Heltermaa -> Rohuküla "
-            f"on {DATE}.\n\nSent from your own Gmail account via SMTP, so it "
+            f"same way when car tickets open up for {ROUTE_LABEL} "
+            f"on {DATE}, for departures between {TIME_FROM} and {TIME_TO}."
+            "\n\nSent from your own Gmail account via SMTP, so it "
             "will not be spam-filtered.",
         )
         return
